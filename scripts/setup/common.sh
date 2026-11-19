@@ -4,6 +4,11 @@ TFP="$HOME/tfp"
 SRC="$TFP/src/TensorFold"
 DEPLOY="$TFP/deploy/current"
 BUNDLE="$HOME/models/tf-port/inputs-tp2-c178a012"
+# the serving conf is authoritative for the bundle (a 1M setup uses a different one)
+if [ -f "$HOME/tfp/run/conf/my.conf" ]; then
+  CB=$(sed -n "s/^BUNDLE='\(.*\)'.*/\1/p" "$HOME/tfp/run/conf/my.conf")
+  [ -n "$CB" ] && BUNDLE=$(eval echo "$CB")
+fi
 GAPS=0; ACTIONS=0
 ok()   { printf '  [ok]   %s\n' "$*"; }
 gap()  { printf '  [GAP]  %s\n' "$*"; GAPS=$((GAPS+1)); }

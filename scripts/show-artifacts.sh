@@ -18,6 +18,10 @@ echo "  ds-kit:   $D/ds-kit ($(sz "$D/ds-kit"))"
 
 H "model bundle (weights live in the rank caches)"
 B=$HOME/models/tf-port/inputs-tp2-c178a012
+if [ -f "$HOME/tfp/run/conf/my.conf" ]; then
+  CB=$(sed -n "s/^BUNDLE='\(.*\)'.*/\1/p" "$HOME/tfp/run/conf/my.conf")
+  [ -n "$CB" ] && B=$(eval echo "$CB")
+fi
 echo "  bundle:      $B"
 echo "  model dir:   $B/model ($(sz "$B/model")) — config.json, tokenizer.json, chat_template.jinja"
 for r in 0 1; do

@@ -50,8 +50,10 @@ if on0 true 2>/dev/null; then
     ldconfig -p 2>/dev/null | grep -q libamdhip64.so.7 && echo "  [ok]   libamdhip64 registered" || echo "  [GAP]  ldconfig registration (phase 04)"
     [ -x "$HOME/venvs/tfp-inputs/bin/python" ] && echo "  [ok]   venv tfp-inputs" || echo "  [GAP]  venv tfp-inputs (phase 05)"
     [ -x "$HOME/tfp/deploy/current/native-hip/bin/tensorfold-native" ] && echo "  [ok]   deploy: $(readlink $HOME/tfp/deploy/current)" || echo "  [GAP]  no deployment (phase 08)"
-    [ -d "$HOME/models/tf-port/inputs-tp2-c178a012/model" ] && echo "  [ok]   bundle" || echo "  [GAP]  bundle missing (phase 08)"
-    ls "$HOME/models/tf-port/inputs-tp2-c178a012".verify-rank0-*.json >/dev/null 2>&1 && echo "  [ok]   verify report rank0" || echo "  [GAP]  rank0 verify report (phase 08)"
+    B=$HOME/models/tf-port/inputs-tp2-c178a012
+    if [ -f $HOME/tfp/run/conf/my.conf ]; then CB=$(sed -n "s/^BUNDLE=\x27\(.*\)\x27.*/\1/p" $HOME/tfp/run/conf/my.conf); [ -n "$CB" ] && B=$(eval echo "$CB"); fi
+    [ -d "$B/model" ] && echo "  [ok]   bundle: $B" || echo "  [GAP]  bundle missing (phase 08)"
+    ls "$B".verify-rank0-*.json >/dev/null 2>&1 && echo "  [ok]   verify report rank0" || echo "  [GAP]  rank0 verify report (phase 08)"
     [ -f "$HOME/tfp/run/conf/my.conf" ] && echo "  [ok]   conf: my.conf" || echo "  [GAP]  serving conf (phase 09)"
     echo "  [ok]   MemAvailable: $(awk "/MemAvailable/{print int(\$2/1048576)}" /proc/meminfo) GiB"
     podman ps --format "{{.Names}}" 2>/dev/null | grep -q halogen-flash-server && echo "  [GAP]  halogen-flash-server running — stop before serving (make halogen-stop)"

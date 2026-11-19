@@ -25,8 +25,8 @@ Humans: the same phases work run by hand; the runbook below covers day-2 operati
 
 ## Topology
 
-- **node0** (`workshop`, ssh alias `node0` = 10.40.0.1): rank 0, serves the OpenAI-compatible API.
-- **node1** (`workshops`, this box): rank 1, the build/ops box. Both boxes linked by two USB4 cables
+- **node0** (`workshop` on this pair, ssh alias `node0` = 10.40.0.1): rank 0, serves the OpenAI-compatible API.
+- **node1** (`workshops` on this pair, the box you run on): rank 1, the build/ops box. Both boxes linked by two USB4 cables
   (10.40.0.x control, 10.40.1.x stripe).
 - Model: the TP2 DeepSeek-V4.1-Flash port (LibertAI EXL3 2.9 bpw checkpoint + Engram shards), one commit's
   bytes deployed on both boxes.
@@ -163,7 +163,7 @@ shipped 8K context: 70.8 / 41.9 / 1,260. Full numbers: PR #50 and docs/COMMUNITY
 
 - Upstream guide: [Shoestring-dev/StrixFold PR #50](https://github.com/Shoestring-dev/StrixFold/pull/50)
   (docs/FRAMEWORK-DESKTOP.md — the from-scratch walkthrough this runbook condenses).
-- Agent skill: `strixfold-two-box` (setup audit workflow + `references/serve-lifecycle.md` with the wedge
-  analysis and the RoPE extension procedure).
+- Agent skill: `strixfold-two-box` (optional, Hermes-specific: setup audit workflow +
+  `references/serve-lifecycle.md` with the wedge analysis and the RoPE extension procedure).
 - Hermes's local LLM backend points at this serve (`local-model`); with the serve down, switch the agent to a
   portal model or restore halogen.
