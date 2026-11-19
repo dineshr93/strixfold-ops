@@ -1,0 +1,87 @@
+# StrixFold TP2 serve lifecycle — DeepSeek-V4.1 port on the two Strix Halo boxes.
+#
+# stop/status wrap TensorFold's first_light.sh; start uses scripts/start-serve.sh:
+# staggered boot (rank 1 loads first) with stall detection + retry — the weight
+# load intermittently wedges (HSA signal spin + kernel SVM-restore livelock).
+# Both ranks read ONE config: ~/tfp/run/conf/my.conf, which must exist at the same
+# path under each box's $HOME (edit it here, then: make sync-conf).
+#
+# Current serving settings (my.conf): CONTEXT=1048576 (1M; the ds-kit RoPE tables
+# were extended to the creator kit's full 1,114,112 verified rows — hard cap is
+# rows - 49; originals backed up in ~/tfp/run/ds-kit-65536-backup on both boxes),
+# SERVE_HOST=0.0.0.0, SERVE_PORT=18080, SERVE_NAME=local-model (the name
+# /v1/models and chat requests use), MODALITIES=text (vision needs a tower
+# sidecar + gate bias that this deploy does not carry).
+#
+# Memory: a rank starts only with MemAvailable >= PEAK_GIB + 8 (105 + 8 GiB) and
+# no other engine on its box — stop halogen (make halogen-stop) and any docker
+# GPU stacks before start.
+
+SHELL  := /bin/bash
+TOOLS  := $(HOME)/tfp/deploy/current/tools/dsv41-hip
+CONF   := $(HOME)/tfp/run/conf/my.conf
+RUN    := $(HOME)/tfp/run/serve/latest
+FL     = TF_SERVE_CONF=$(CONF) $(TOOLS)/first_light.sh
+R0     := node0
+PORT   := $(shell sed -n 's/^SERVE_PORT=\([0-9][0-9]*\).*/\1/p' $(CONF))
+API    ?= http://10.40.0.1:$(PORT)
+MODEL  ?= $(shell sed -n 's/^SERVE_NAME=\([^ #][^ #]*\).*/\1/p' $(CONF))
+
+.DEFAULT_GOAL := help
+.PHONY: help start stop restart status sync-conf conf health models probe logs logs0 bench show halogen-stop halogen-up
+
+help: ## Show this help
+	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
+
+start: ## Bring the pair up, staggered (rank 1 loads first; probe; minutes)
+	@ssh $(R0) 'podman ps --format "{{.Names}}"' | grep -q '^halogen-flash-server$$' && \
+		{ echo "halogen-flash-server is running on node0 — 'make halogen-stop' first (memory gate)"; exit 1; } || true
+	bash scripts/start-serve.sh
+
+stop: ## Stop both ranks cleanly (SIGTERM rank 0, rank 1 follows, locks released)
+	$(FL) down
+
+restart: ## down, then the staggered start
+	$(FL) down
+	bash scripts/start-serve.sh
+
+status: ## Both ranks' state and GPU-lock holders
+	$(FL) status
+
+sync-conf: ## Copy my.conf to node0 (both boxes must read the same file)
+	scp $(CONF) $(R0):tfp/run/conf/my.conf
+
+conf: ## Show the serving knobs in my.conf
+	@grep -E '^(CONTEXT|POOL|STREAMS|PARALLEL|SERVE_HOST|SERVE_PORT|SERVE_NAME|MODALITIES|PEAK_GIB|MEMORY_LIMIT_GB|MAX_TOKENS|BENCH)=' $(CONF)
+
+health: ## rank 0's /health
+	@curl -fsS $(API)/health && echo
+
+models: ## /v1/models — the served alias and max_model_len
+	@curl -fsS $(API)/v1/models | python3 -m json.tool
+
+probe: ## One chat completion against the served model
+	@curl -fsS $(API)/v1/chat/completions -H 'Content-Type: application/json' \
+		-d '{"model":"$(MODEL)","messages":[{"role":"user","content":"Answer in one sentence: what is the capital of France?"}],"max_tokens":64,"temperature":0}' \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["choices"][0]["message"]["content"])'
+
+logs: ## Follow rank 1's log (this box)
+	tail -n 50 -f $(RUN)/rank1.log
+
+logs0: ## Follow rank 0's log (node0)
+	ssh $(R0) 'tail -n 50 -f $$HOME/tfp/run/serve/latest/rank0.log'
+
+bench: ## The last run's bench numbers
+	@cat $(RUN)/bench.json | python3 -m json.tool
+
+show: ## Artifacts on BOTH boxes: engines, kits, weights, configs, paths
+	@echo '===== node1 (this box, rank 1) ====='
+	@bash scripts/show-artifacts.sh
+	@echo; echo '===== node0 (rank 0) ====='
+	@ssh $(R0) 'bash -s' < scripts/show-artifacts.sh
+
+halogen-stop: ## Stop the agent's podman LLM backend on node0 (frees ~71 GB)
+	ssh $(R0) podman stop halogen-flash-server
+
+halogen-up: ## Restore the agent's podman LLM backend on node0 (after stop!)
+	ssh $(R0) ~/bin/halogen-up

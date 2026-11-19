@@ -1,0 +1,147 @@
+# strixfold-ops
+
+Operational artifacts and the working procedure for the StrixFold TP2 serve on the two Framework Desktops
+(Ryzen AI Max+ 395, 128 GB, gfx1151). Isolated from the `tc` repo; everything here runs from **node1**.
+
+- **node0** (`workshop`, ssh alias `node0` = 10.40.0.1): rank 0, serves the OpenAI-compatible API.
+- **node1** (`workshops`, this box): rank 1, the build/ops box. Both boxes linked by two USB4 cables
+  (10.40.0.x control, 10.40.1.x stripe).
+- Model: the TP2 DeepSeek-V4.1-Flash port (LibertAI EXL3 2.9 bpw checkpoint + Engram shards), one commit's
+  bytes deployed on both boxes.
+
+Upstream source: `~/tfp/src/TensorFold` (github.com/Shoestring-dev/StrixFold). The from-scratch setup guide
+(BIOS → serving, including everything below) is docs/FRAMEWORK-DESKTOP.md in
+[PR #50](https://github.com/Shoestring-dev/StrixFold/pull/50).
+
+## Current serving configuration
+
+`~/tfp/run/conf/my.conf` — **the same file must exist at the same path on both boxes** (`make sync-conf`):
+
+| knob | value | meaning |
+|---|---|---|
+| `CONTEXT` | 1048576 | 1M-token window (RoPE tables extended, see below) |
+| `SERVE_HOST` | 0.0.0.0 | reachable on the LAN |
+| `SERVE_PORT` | 8888 | API port |
+| `SERVE_NAME` | local-model | the model id in `/v1/models` and chat requests |
+| `PEAK_GIB` | 105 | memory gate: a rank starts only with MemAvailable ≥ 113 GiB |
+| `MODALITIES` | text | vision needs a tower sidecar + gate bias this deploy doesn't ship |
+| `BENCH` | 1 | first_light bench cases (the staggered start skips them; run bench manually) |
+
+Endpoint: `http://192.168.178.33:8888/v1` (LAN) or `http://10.40.0.1:8888/v1` (USB4, from node1), model
+`local-model`. `/health` reports `context_length: 1048558`.
+
+## Daily operations (make targets)
+
+| target | what it does |
+|---|---|
+| `make start` | staggered boot: rank 1 loads first, stall detection + 150 s cooldown retry (up to 4), then rank 0, `/health` + probe. Refuses if halogen is running on node0. |
+| `make stop` | `first_light.sh down`: SIGTERM rank 0, rank 1 follows, both GPU locks released |
+| `make restart` | stop, then the staggered start |
+| `make status` | both ranks + GPU locks + `/health` |
+| `make show` | artifacts on BOTH boxes: engines, kits, weight caches, configs, GPU/memory |
+| `make health` / `make models` / `make probe` | `/health`, `/v1/models`, one chat completion (port/name read from the conf) |
+| `make logs` / `make logs0` | follow rank 1's / rank 0's log (`~/tfp/run/serve/latest/`) |
+| `make conf` / `make sync-conf` | show the serving knobs / copy my.conf to node0 |
+| `make bench` | the last first_light bench numbers |
+| `make halogen-stop` / `make halogen-up` | stop/restore the old podman LLM backend on node0 (see Memory below) |
+
+### Change the port, the model alias, or the context
+
+1. `make stop`
+2. edit `~/tfp/run/conf/my.conf` (`SERVE_PORT`, `SERVE_NAME`, `CONTEXT`, …)
+3. `make sync-conf` (both ranks must read the same file)
+4. `make start`, then `make health` / `make models`
+
+The Makefile and start script read `SERVE_PORT`/`SERVE_NAME` from the conf — no hardcoded values to update.
+
+## The load wedge (this kernel) and recovery
+
+On the stock Ubuntu kernel 7.3.0-10-generic the weight load intermittently wedges ~3 GiB into layer-0
+experts: rank 1's main thread spins in libhsa `BusyWaitSignal::WaitRelaxed` (100% CPU), the GPU is idle, the
+kernel log shows `svm_range_restore_work` / `restore_userptr_worker` hogging CPU; rank 0 dies
+`PeerNeverLinked`, rank 1's log stays empty.
+
+Established behavior: after a wedged rank is SIGKILLed, the kernel's SVM-restore work stays livelocked for a
+while — **instant retries re-wedge; a load started ≥150 s after the kill is clean.** `make start` implements
+exactly that (30 s of flat `/proc/<pid>/io` read_bytes = wedged → kill → 150 s cooldown → retry).
+
+Manual recovery if a start ever exhausts its attempts:
+
+```bash
+make stop                                   # clears locks and any leftover rank
+sleep 150                                   # let the kernel settle (or reboot node1)
+make start
+```
+
+Diagnosis commands (the sandbox blocks perf; run with sudo in a user terminal):
+`perf record -e cpu-clock -g -p <rank1 pid> -- sleep 5 && perf report --stdio --no-children`,
+`cat /sys/class/drm/card*/device/gpu_busy_percent` (idle while wedged),
+`journalctl -k | grep -E 'svm_range|restore_userptr'`.
+
+## Memory gate and other GPU work
+
+A rank starts only with `MemAvailable >= PEAK_GIB + 8` (113 GiB at PEAK_GIB=105) and no other engine on its
+box. The weights are ~99 GiB a rank; the pool adds ~0.9 KB per position per rank. Before serving, stop other
+GPU consumers on node0 — notably the old agent backend:
+
+```bash
+make halogen-stop     # podman stop halogen-flash-server (frees ~71 GB)
+make start
+# to restore the old backend afterwards (conflicts with SERVE_PORT=8888 — change one of them):
+make halogen-up
+```
+
+## The 1M-token window (how it was set up)
+
+The shipped ds-kit RoPE tables hold 65,536 rows (`CONTEXT` ≤ rows − 49). This pair runs the creator kit's full
+**1,114,112 hash-verified rows**, generated with the pinned CPU generator
+(`~/venvs/tfp-inputs`, `prepare_inputs.generate_rope`, reference = `assets/creator_kit_v0.6.1_rope.json`) and
+installed into `~/tfp/deploy/current/ds-kit` on **both** boxes (read-only deploy: chmod u+w → copy → 400/555).
+The ds-kit is not covered by the HIP kit manifest check; both boxes must hold identical files.
+
+- Originals: `~/tfp/run/ds-kit-65536-backup/` on both boxes. Rollback = copy them back the same way, set
+  `CONTEXT=8192` (or ≤ 65487), `PEAK_GIB=101`, sync-conf, restart.
+- The clean from-scratch alternative (a second full `prepare_inputs.sh` with `R=1048576`) is documented in
+  GETTING-STARTED.md "Longer context" and PR #50 §10.
+- `CONTEXT` hard cap with the full tables: 1,114,063. `/health` reports CONTEXT − 18.
+
+## Artifact inventory (same layout on both boxes)
+
+| artifact | path |
+|---|---|
+| engines | `~/tfp/deploy/current/native-hip/bin/{tensorfold-native,tf-dsv41-lanes}` |
+| HIP kit (manifest-checked) | `~/tfp/deploy/current/native-hip/share/tensorfold/hip/gfx1151/dsv41` |
+| ds-kit (RoPE + engram.json) | `~/tfp/deploy/current/ds-kit` |
+| serve tools | `~/tfp/deploy/current/tools/dsv41-hip` (first_light.sh, serve-rank{0,1}.sh, serve_lib.sh, bench) |
+| model bundle | `~/models/tf-port/inputs-tp2-c178a012` (model/, rank0/rank1 caches ~99 GiB each, token map, manifest) |
+| Engram shards | `~/models/tf-port/ds1017-1bae0e10` (~190 GiB) |
+| checkpoint | `~/models/tf-port/libertai-2.9bpw` (~197 GiB) |
+| serving config | `~/tfp/run/conf/my.conf` (identical on both boxes) |
+| runs | `~/tfp/run/serve/<RUN_ID>/` — rank logs, pids, resolved.json, bench.json; `latest` symlink |
+| source checkout | `~/tfp/src/TensorFold` (node1) |
+| venvs | `~/venvs/tfp-inputs` (torch CPU, inputs/rope), `~/venvs/triton` (node1) |
+| GPU lock | `/var/tmp/halo-gpu.lock` (per box) |
+
+`make show` prints all of this live on both boxes.
+
+## Benchmarking
+
+```bash
+# the three bench cases against a live run (on node0):
+ssh node0 'cd ~/tfp/deploy/current/tools/dsv41-hip && RUN_ID=<run> TF_SERVE_CONF=$HOME/tfp/run/conf/my.conf ./serve-rank0.sh bench'
+# writing speed vs context depth (from node1; adjust URL/model to the conf):
+cd ~/tfp/src/TensorFold && python3 tools/dsv41-hip/ctx_sweep.py http://10.40.0.1:8888 local-model zig/src 0,2000,8000,32000 1 sweep.json
+```
+
+Last measured (19 Nov 2026, CONTEXT=1048576, DRAFTS=1): code 71.7 / prose 41.7 tok/s, prompt reading
+1,258 tok/s at 1,818 tokens; ctx sweep writing 68–72 tok/s flat to 32k depth, prefill ~1,250 tok/s. At the
+shipped 8K context: 70.8 / 41.9 / 1,260. Full numbers: PR #50 and docs/COMMUNITY-RESULTS.md upstream.
+
+## Related
+
+- Upstream guide: [Shoestring-dev/StrixFold PR #50](https://github.com/Shoestring-dev/StrixFold/pull/50)
+  (docs/FRAMEWORK-DESKTOP.md — the from-scratch walkthrough this runbook condenses).
+- Agent skill: `strixfold-two-box` (setup audit workflow + `references/serve-lifecycle.md` with the wedge
+  analysis and the RoPE extension procedure).
+- Hermes's local LLM backend points at this serve (`local-model`); with the serve down, switch the agent to a
+  portal model or restore halogen.
