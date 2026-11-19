@@ -85,7 +85,10 @@ kernel log shows `svm_range_restore_work` / `restore_userptr_worker` hogging CPU
 
 Established behavior: after a wedged rank is SIGKILLed, the kernel's SVM-restore work stays livelocked for a
 while — **instant retries re-wedge; a load started ≥150 s after the kill is clean.** `make start` implements
-exactly that (30 s of flat `/proc/<pid>/io` read_bytes = wedged → kill → 150 s cooldown → retry).
+exactly that (30 s of flat `/proc/<pid>/io` read_bytes = wedged → kill → 150 s cooldown → retry). A **deep
+cluster** can survive all four cooldown retries and even a 240 s no-load settle (the kernel restore warnings
+go quiet but the load still wedges ~3 GiB in): **reboot the wedged box** to clear the kernel SVM-restore
+state, then retry. Don't blame a recent power/config change for a cluster until a reboot-and-retry isolates it.
 
 Manual recovery if a start ever exhausts its attempts:
 
@@ -158,6 +161,33 @@ cd ~/tfp/src/TensorFold && python3 tools/dsv41-hip/ctx_sweep.py http://10.40.0.1
 Last measured (19 Nov 2026, CONTEXT=1048576, DRAFTS=1): code 71.7 / prose 41.7 tok/s, prompt reading
 1,258 tok/s at 1,818 tokens; ctx sweep writing 68–72 tok/s flat to 32k depth, prefill ~1,250 tok/s. At the
 shipped 8K context: 70.8 / 41.9 / 1,260. Full numbers: PR #50 and docs/COMMUNITY-RESULTS.md upstream.
+
+### CPU power profile — the one safe, quality-neutral lever
+
+The conf above is already at the upstream tuned reference (two-cable stripe, MTU 1500, proxy + HIP graphs,
+drafts, `AUX=hip`, `PREFILL_SPLIT_LARGE=1`); there is no conf-level speedup left to guess. The remaining
+quality-neutral lever is the CPU power profile. Set it on **both** boxes (persists across reboot via
+power-profiles-daemon; unprivileged `powerprofilesctl set` is polkit-denied over ssh, so use sudo):
+
+```bash
+sudo powerprofilesctl set performance   # both nodes; verify: powerprofilesctl get -> performance
+```
+
+Measured on this pair (CONTEXT=1048576, greedy, two bench runs averaged vs balanced): **prefill 1,290 →
+1,394 tok/s (+8%, best run +11.6%)**, decode code 70.95 → 72.27 (+1.9%) / prose 41.53 → 41.98 (+1.1%),
+TTFT 1.41 → 1.35 s. All three completion sha256s **bit-identical** to balanced — no quality trade. Decode
+is GPU/USB4-latency bound so CPU clocks barely move it; prefill (CPU-side gather/proxy) gains most. Temps
+under load stay safe (node0 CPU ~75 °C / GPU ~57 °C, node1 cooler; throttle ~95 °C). Revert with
+`sudo powerprofilesctl set balanced`. The experimental knobs (`HC_SIDE`/`ENGRAM_AIO`/`L2_PREFETCH`) and the
+screened "mb5" `ROUND_MS` table have no qualified verdict upstream — left off.
+
+After a staggered start, `bench.json` lives in **node0's** run dir (`make bench` reads node1's, which is
+empty); run it on node0:
+
+```bash
+RID=$(ssh node0 'readlink ~/tfp/run/serve/latest')
+ssh node0 "cd ~/tfp/deploy/current/tools/dsv41-hip && RUN_ID=$RID TF_SERVE_CONF=\$HOME/tfp/run/conf/my.conf ./serve-rank0.sh bench"
+```
 
 ## Related
 
