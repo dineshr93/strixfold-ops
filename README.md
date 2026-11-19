@@ -45,7 +45,7 @@ Upstream source: `~/tfp/src/TensorFold` (github.com/Shoestring-dev/StrixFold). T
 | `SERVE_HOST` | 0.0.0.0 | reachable on the LAN |
 | `SERVE_PORT` | 8888 | API port |
 | `SERVE_NAME` | local-model | the model id in `/v1/models` and chat requests |
-| `PEAK_GIB` | 105 | memory gate: a rank starts only with MemAvailable ≥ 113 GiB |
+| `PEAK_GIB` | 107 | memory gate: a rank starts only with MemAvailable ≥ 115 GiB |
 | `MODALITIES` | text | vision needs a tower sidecar + gate bias this deploy doesn't ship |
 | `BENCH` | 1 | first_light bench cases (the staggered start skips them; run bench manually) |
 
@@ -105,7 +105,7 @@ Diagnosis commands (the sandbox blocks perf; run with sudo in a user terminal):
 
 ## Memory gate and other GPU work
 
-A rank starts only with `MemAvailable >= PEAK_GIB + 8` (113 GiB at PEAK_GIB=105) and no other engine on its
+A rank starts only with `MemAvailable >= PEAK_GIB + 8` (115 GiB at PEAK_GIB=107) and no other engine on its
 box. The weights are ~99 GiB a rank; the pool adds ~0.9 KB per position per rank. Before serving, stop other
 GPU consumers on node0 — notably the old agent backend:
 

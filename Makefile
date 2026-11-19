@@ -9,11 +9,11 @@
 # Current serving settings (my.conf): CONTEXT=1048576 (1M; the ds-kit RoPE tables
 # were extended to the creator kit's full 1,114,112 verified rows — hard cap is
 # rows - 49; originals backed up in ~/tfp/run/ds-kit-65536-backup on both boxes),
-# SERVE_HOST=0.0.0.0, SERVE_PORT=18080, SERVE_NAME=local-model (the name
+# SERVE_HOST=0.0.0.0, SERVE_PORT=8888, SERVE_NAME=local-model (the name
 # /v1/models and chat requests use), MODALITIES=text (vision needs a tower
 # sidecar + gate bias that this deploy does not carry).
 #
-# Memory: a rank starts only with MemAvailable >= PEAK_GIB + 8 (105 + 8 GiB) and
+# Memory: a rank starts only with MemAvailable >= PEAK_GIB + 8 (107 + 8 GiB) and
 # no other engine on its box — stop halogen (make halogen-stop) and any docker
 # GPU stacks before start.
 

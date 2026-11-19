@@ -1,14 +1,14 @@
 #!/bin/bash
 # 09-serve.sh — serving config on both boxes, then the staggered start (health + probe).
 # Env: SERVE_NAME (default dsv41), SERVE_HOST (default 127.0.0.1), SERVE_PORT (default 18080),
-#      ROWS (default 65536; 1048576 sets CONTEXT=1048576, PEAK_GIB=105 and the 1M bundle).
+#      ROWS (default 65536; 1048576 sets CONTEXT=1048576, PEAK_GIB=107 and the 1M bundle).
 cd "$(dirname "$0")" && source ./common.sh
 ROWS=${ROWS:-65536}
 NAME=${SERVE_NAME:-dsv41}; HOST=${SERVE_HOST:-127.0.0.1}; PORT=${SERVE_PORT:-18080}
 CONF="$TFP/run/conf/my.conf"
 [ -x "$DEPLOY/tools/dsv41-hip/first_light.sh" ] || { echo "no deployment — phase 08 first"; exit 1; }
 if [ "$ROWS" = 65536 ]; then B='$HOME/models/tf-port/inputs-tp2-c178a012'; CTX=8192; PEAK=101
-else B="\$HOME/models/tf-port/inputs-tp2-${ROWS}"; CTX=$((ROWS - 49)); PEAK=105; fi
+else B="\$HOME/models/tf-port/inputs-tp2-${ROWS}"; CTX=$((ROWS - 49)); PEAK=107; fi
 info "serving config (both boxes, identical)"
 if [ "$ROWS" = 65536 ]; then BM="$HOME/models/tf-port/inputs-tp2-c178a012/inputs_manifest.json"
 else BM="$HOME/models/tf-port/inputs-tp2-${ROWS}/inputs_manifest.json"; fi
