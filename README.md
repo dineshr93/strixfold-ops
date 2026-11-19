@@ -3,6 +3,28 @@
 Operational artifacts and the working procedure for the StrixFold TP2 serve on the two Framework Desktops
 (Ryzen AI Max+ 395, 128 GB, gfx1151). Isolated from the `tc` repo; everything here runs from **node1**.
 
+## Point your AI at this repo
+
+This repo is built to be handed to an AI coding agent (Claude Code, Hermes, Codex, …) on a fresh pair of
+boxes: **read [AGENTS.md](AGENTS.md), run `make preflight`, and work the setup phases in order.** The agent
+audits both boxes, automates everything it can unprivileged, and prints the exact remaining commands for the
+privileged steps (apt, grub, netplan, BIOS) — it asks before reboots and before stopping your services.
+
+```bash
+git clone <this repo> ~/repos/strixfold-ops && cd ~/repos/strixfold-ops
+make preflight          # read-only audit of both boxes -> gap list
+make setup-01-firmware  # then 02-kernel, 03-network, … 09-serve (see AGENTS.md)
+```
+
+Every phase script is check-first and idempotent: on an already-set-up pair each one reports `[ok]` and does
+nothing. Long phases (kit build, downloads, input prep) are meant to run in the background. Exit codes:
+`0` done, `2` actions remain (read the `[DO]` lines), `1` error. For a 1M-token window from scratch, run
+phases 08 and 09 with `ROWS=1048576` (the documented full-prepare path).
+
+Humans: the same phases work run by hand; the runbook below covers day-2 operations.
+
+## Topology
+
 - **node0** (`workshop`, ssh alias `node0` = 10.40.0.1): rank 0, serves the OpenAI-compatible API.
 - **node1** (`workshops`, this box): rank 1, the build/ops box. Both boxes linked by two USB4 cables
   (10.40.0.x control, 10.40.1.x stripe).

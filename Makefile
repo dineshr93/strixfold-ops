@@ -28,10 +28,20 @@ API    ?= http://10.40.0.1:$(PORT)
 MODEL  ?= $(shell sed -n 's/^SERVE_NAME=\([^ #][^ #]*\).*/\1/p' $(CONF))
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop restart status sync-conf conf health models probe logs logs0 bench show halogen-stop halogen-up
+.PHONY: help start stop restart status sync-conf conf health models probe logs logs0 bench show halogen-stop halogen-up setup preflight $(addprefix setup-,$(notdir $(wildcard scripts/setup/[0-9]*.sh)))
 
 help: ## Show this help
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
+
+setup: ## From-scratch setup: read AGENTS.md, then run the phases in order
+	@echo "Read AGENTS.md first. Then: make preflight, and work the phases:"
+	@ls scripts/setup/[0-9]*.sh | sed 's|scripts/setup/|  bash scripts/setup/|'
+
+preflight: ## Audit both boxes (read-only), print the gap list
+	bash scripts/setup/00-preflight.sh
+
+setup-%: ## Run one setup phase, e.g. make setup-04-rocm
+	bash scripts/setup/$*.sh
 
 start: ## Bring the pair up, staggered (rank 1 loads first; probe; minutes)
 	@ssh $(R0) 'podman ps --format "{{.Names}}"' | grep -q '^halogen-flash-server$$' && \
