@@ -65,8 +65,9 @@ Phases 05–09 run on node1 and drive node0 over ssh.
 
 ## Day-2 operations
 
-`make help` in this repo: start/stop/restart/status/show/logs/health/models/probe/conf/sync-conf/bench/
-halogen-stop/halogen-up. Configuration lives in `~/tfp/run/conf/my.conf`, identical on both boxes
+`make help` in this repo: start/startv/stop/restart/status/show/logs/health/models/probe/conf/sync-conf/bench/
+halogen-stop/halogen-up (`startv` = the same pair with the vision tower on, through
+`~/tfp/run/conf/my-vision.conf`). Configuration lives in `~/tfp/run/conf/my.conf`, identical on both boxes
 (`make sync-conf` after any edit). README.md is the full runbook: port/alias/context changes, the 1M RoPE
 extension and rollback, artifact inventory, benchmarking.
 

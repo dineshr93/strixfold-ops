@@ -30,7 +30,7 @@ else
 fi
 info "start"
 # an existing conf is authoritative for the port (it may differ from this script's default)
-[ -f "$CONF" ] && PORT=$(sed -n 's/^SERVE_PORT=\([0-9][0-9]*\).*/\1/p' "$CONF")
+[ -f "$CONF" ] && PORT=$(bash -c '. "$1" >/dev/null 2>&1; printf "%s" "${SERVE_PORT:-}"' bash "$CONF")
 if curl -fsS -m 3 "http://10.40.0.1:$PORT/health" >/dev/null 2>&1; then
   ok "already serving on port $PORT — nothing to do"
   finish

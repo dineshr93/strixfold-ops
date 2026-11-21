@@ -10,8 +10,11 @@
 # were extended to the creator kit's full 1,114,112 verified rows — hard cap is
 # rows - 49; originals backed up in ~/tfp/run/ds-kit-65536-backup on both boxes),
 # SERVE_HOST=0.0.0.0, SERVE_PORT=8888, SERVE_NAME=local-model (the name
-# /v1/models and chat requests use), MODALITIES=text (vision needs a tower
-# sidecar + gate bias that this deploy does not carry).
+# /v1/models and chat requests use), MODALITIES=text for 'make start'.
+# 'make startv' brings the same pair up with the model's vision tower on: it installs
+# my-vision.conf (my.conf + the image keys — the sidecar, the gate bias and the kit's
+# vision object are staged on both boxes) and starts with that conf. Make stop first
+# to switch between the two.
 #
 # Memory: a rank starts only with MemAvailable >= PEAK_GIB + 8 (107 + 8 GiB) and
 # no other engine on its box — stop halogen (make halogen-stop) and any docker
@@ -20,15 +23,18 @@
 SHELL  := /bin/bash
 TOOLS  := $(HOME)/tfp/deploy/current/tools/dsv41-hip
 CONF   := $(HOME)/tfp/run/conf/my.conf
+CONFV  := $(HOME)/tfp/run/conf/my-vision.conf
 RUN    := $(HOME)/tfp/run/serve/latest
 FL     = TF_SERVE_CONF=$(CONF) $(TOOLS)/first_light.sh
 R0     := node0
-PORT   := $(shell sed -n 's/^SERVE_PORT=\([0-9][0-9]*\).*/\1/p' $(CONF))
+# source, don't grep: CONF may be an overlay that sources my.conf (my-vision.conf),
+# whose SERVE_PORT/SERVE_NAME lines are not literal in the overlay file itself
+PORT   := $(shell bash -c '. "$$1" >/dev/null 2>&1; printf "%s" "$${SERVE_PORT:-}"' bash $(CONF))
 API    ?= http://10.40.0.1:$(PORT)
-MODEL  ?= $(shell sed -n 's/^SERVE_NAME=\([^ #][^ #]*\).*/\1/p' $(CONF))
+MODEL  ?= $(shell bash -c '. "$$1" >/dev/null 2>&1; printf "%s" "$${SERVE_NAME:-}"' bash $(CONF))
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop restart status sync-conf conf health models probe logs logs0 bench show halogen-stop halogen-up setup preflight $(addprefix setup-,$(notdir $(wildcard scripts/setup/[0-9]*.sh)))
+.PHONY: help start startv _gate stop restart status sync-conf conf health models probe logs logs0 bench show halogen-stop halogen-up setup preflight $(addprefix setup-,$(notdir $(wildcard scripts/setup/[0-9]*.sh)))
 
 help: ## Show this help
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -43,10 +49,17 @@ preflight: ## Audit both boxes (read-only), print the gap list
 setup-%: ## Run one setup phase, e.g. make setup-04-rocm
 	bash scripts/setup/$*.sh
 
-start: ## Bring the pair up, staggered (rank 1 loads first; probe; minutes)
+start: _gate ## Bring the pair up, staggered, text only (rank 1 loads first; probe; minutes)
+	bash scripts/start-serve.sh
+
+startv: _gate ## Bring the pair up with the vision tower too (MODALITIES=text_image)
+	@bash scripts/vision-conf.sh
+	CONF=$(CONFV) bash scripts/start-serve.sh
+
+# the precondition both starts share: no other engine on node0 (the memory gate)
+_gate:
 	@ssh $(R0) 'podman ps --format "{{.Names}}"' | grep -q '^halogen-flash-server$$' && \
 		{ echo "halogen-flash-server is running on node0 — 'make halogen-stop' first (memory gate)"; exit 1; } || true
-	bash scripts/start-serve.sh
 
 stop: ## Stop both ranks cleanly (SIGTERM rank 0, rank 1 follows, locks released)
 	$(FL) down

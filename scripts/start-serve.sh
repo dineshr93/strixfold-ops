@@ -11,9 +11,13 @@
 # run dirs and resolved.json stay compatible with first_light.sh down/status.
 set -euo pipefail
 TOOLS=$HOME/tfp/deploy/current/tools/dsv41-hip
-CONF=$HOME/tfp/run/conf/my.conf
-PORT=$(sed -n 's/^SERVE_PORT=\([0-9][0-9]*\).*/\1/p' "$CONF")
-NAME=$(sed -n 's/^SERVE_NAME=\([^ #][^ #]*\).*/\1/p' "$CONF")
+CONF=${CONF:-$HOME/tfp/run/conf/my.conf}   # make startv passes the vision variant
+# resolve by sourcing, not grepping literal lines: the conf may be an overlay that
+# sources another file (my-vision.conf sources my.conf). A literal-line grep finds
+# nothing there, PORT stays empty, and the readiness poll hammers the fallback port
+# while the pair serves fine — then the ERR trap takes the healthy run down.
+PORT=$(bash -c '. "$1" >/dev/null 2>&1; printf "%s" "${SERVE_PORT:-}"' bash "$CONF")
+NAME=$(bash -c '. "$1" >/dev/null 2>&1; printf "%s" "${SERVE_NAME:-}"' bash "$CONF")
 API=http://10.40.0.1:${PORT:-18080}
 R0=node0
 export TF_SERVE_CONF=$CONF

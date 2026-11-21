@@ -57,6 +57,7 @@ Endpoint: `http://192.168.178.33:8888/v1` (LAN) or `http://10.40.0.1:8888/v1` (U
 | target | what it does |
 |---|---|
 | `make start` | staggered boot: rank 1 loads first, stall detection + 150 s cooldown retry (up to 4), then rank 0, `/health` + probe. Refuses if halogen is running on node0. |
+| `make startv` | the same staggered boot with the model's vision tower on (`MODALITIES=text_image`): installs `my-vision.conf`, checks the image inputs, starts with that conf |
 | `make stop` | `first_light.sh down`: SIGTERM rank 0, rank 1 follows, both GPU locks released |
 | `make restart` | stop, then the staggered start |
 | `make status` | both ranks + GPU locks + `/health` |
@@ -75,6 +76,23 @@ Endpoint: `http://192.168.178.33:8888/v1` (LAN) or `http://10.40.0.1:8888/v1` (U
 4. `make start`, then `make health` / `make models`
 
 The Makefile and start script read `SERVE_PORT`/`SERVE_NAME` from the conf — no hardcoded values to update.
+
+### Turn the vision tower on (images)
+
+`make startv` instead of `make start`. It runs `scripts/vision-conf.sh`, which checks the three inputs a
+`text_image` start needs, writes `~/tfp/run/conf/my-vision.conf` — my.conf plus `MODALITIES=text_image`,
+`VISION_DIR` (the tower sidecar) and `VISION_BIAS_SHA256` — installs the identical bytes on node0 (both
+ranks hash the conf into their handshake), and then runs the usual staggered start. Nothing about the
+shared settings changes, so `make start` and `make startv` differ only by the tower.
+
+The assets are already staged on both boxes: the 926 MiB tower sidecar in `~/models/tf-port/vision-sidecar`
+(rank 0's is what gets read) and `ds-kit/vision/gate_bias_vl.safetensors` in the deploy (both ranks). The
+target checks them before the weight load, so a missing sidecar fails in seconds, not after 15 minutes.
+`PEAK_GIB` is inherited as-is: the tower adds ~1.3 GiB on rank 0, inside the gate's +8 GiB headroom.
+
+Switching a running pair between the two needs `make stop` first (`startv` on a pair that already answers
+`/health` just reports "already serving"). Upstream's limits then apply: at most 32 images per request
+(`MAX_IMAGES` in the overlay changes it), 134,217,728 decoded pixels, 4,096 image tokens (ADAPTER.md 8.1).
 
 ## The load wedge (this kernel) and recovery
 
